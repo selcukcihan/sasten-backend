@@ -4,7 +4,10 @@ import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb'
 
 const PROMPT = `
 I'm creating a quiz game for software developers. Each question will have 4 options of which 1 of them is the correct answer.
-Create 5 such questions for me, presented as a json of the following form. An example:
+Create 5 such questions for me, presented as a json of the following form. Only output a valid json, without any other data or formatting.
+The response should be a valid JSON object.
+
+An example:
 
 {
   "questions": [
@@ -121,7 +124,8 @@ export class QuizGenerator {
     const generated = response.text() || ''
     console.log(generated)
 
-    const quiz: Quiz = JSON.parse(generated)
+    const cleanedString = generated.split('\n').filter(line => !line.includes('```')).join('\n');
+    const quiz: Quiz = JSON.parse(cleanedString)
     quiz.date = new Date(2 * 24 * 60 * 60 * 1000 + +new Date()).toISOString().split('T')[0]
 
     await this.docClient.send(new PutCommand({
