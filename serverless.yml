@@ -1,0 +1,107 @@
+service: sasten-backend
+frameworkVersion: '3'
+useDotenv: true
+
+plugins:
+  - serverless-esbuild
+
+provider:
+  name: aws
+  stage: dev
+  region: us-east-1
+  profile: kendi-hesabim
+  tracing:
+    lambda: true
+  
+  runtime: nodejs18.x
+  memorySize: 512
+  timeout: 10
+  logRetentionInDays: 30
+
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - 'dynamodb:*'
+          Resource: '*'
+
+package:
+  individually: true
+
+custom:
+  esbuild:
+    bundle: true
+    minify: false
+    sourcemap: true
+    exclude:
+        - aws-sdk
+    platform: 'node'
+    plugins: ./esbuild-plugins.js
+
+resources:
+  Resources:
+    sastenTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: "sasten-data"
+        BillingMode: "PAY_PER_REQUEST"
+        AttributeDefinitions:
+          - AttributeName: pk
+            AttributeType: S
+          - AttributeName: sk
+            AttributeType: S
+          - AttributeName: GSI1PK
+            AttributeType: S
+          - AttributeName: GSI1SK
+            AttributeType: S
+        KeySchema:
+          - KeyType: "HASH"
+            AttributeName: "pk"
+          - KeyType: "RANGE"
+            AttributeName: "sk"
+        GlobalSecondaryIndexes:
+          - IndexName: "GSI1"
+            Projection:
+              ProjectionType: "ALL"
+              NonKeyAttributes: []
+            KeySchema:
+            - KeyType: "HASH"
+              AttributeName: "GSI1PK"
+            - KeyType: "RANGE"
+              AttributeName: "GSI1SK"
+    IAMUser:
+      UpdateReplacePolicy: "Retain"
+      Type: "AWS::IAM::User"
+      Properties:
+        Path: "/"
+        ManagedPolicyArns:
+        - Ref: "IAMManagedPolicy"
+        UserName: "sasten-user"
+    IAMManagedPolicy:
+      Type: "AWS::IAM::ManagedPolicy"
+      Properties:
+        ManagedPolicyName: "sasten-policy"
+        Path: "/"
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Resource:
+                - !GetAtt sastenTable.Arn
+                - !Join ['/', [!GetAtt sastenTable.Arn, index/GSI1]]
+              Action:
+                - "dynamodb:*"
+              Effect: "Allow"
+              Sid: "DynamoDBAccess"
+
+functions:
+  quizGenerator:
+    handler: src/lambda/index.handler
+    timeout: 28
+    events:
+      - schedule: rate(1 day)
+    environment:
+      TABLE_NAME: ${self:resources.Resources.sastenTable.Properties.TableName}
+      GOOGLE_API_KEY: ${env:GOOGLE_API_KEY}
+      AWS_NODEJS_CONNECTION_REUSE_ENABLED: '1'
+      NODE_OPTIONS: '--enable-source-maps'

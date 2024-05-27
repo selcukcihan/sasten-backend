@@ -1,0 +1,9 @@
+# package directories
+node_modules
+jspm_packages
+
+# Serverless directories
+.serverless
+
+# env files we don't want them in the repo
+.env*
