@@ -1,68 +1,22 @@
 import { Inject, Service } from 'typedi'
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai'
-import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb'
+import { DynamoDBDocumentClient, PutCommand, GetCommand } from '@aws-sdk/lib-dynamodb'
 
-const PROMPT = `
+const PROMPT_1 = `
 I'm creating a quiz game for software developers. Each question will have 4 options of which 1 of them is the correct answer.
-Create 5 such questions for me, presented as a json of the following form. Only output a valid json, without any other data or formatting.
+`
+
+const PROMPT_2 = `
+Some example quizzes:
+
+`
+
+const PROMPT_3 = `
+Create 5 questions for my quiz game, presented as a json of the following form. Only output a valid json, without any other data or formatting.
 The response should be a valid JSON object.
+The questions should not be very easy. They should be challenging enough for a software developer.
 
-An example:
-
-{
-  "questions": [
-    {
-      "answer": 3,
-      "options": [
-        "Java",
-        "Python",
-        "C++",
-        "JavaScript"
-      ],
-      "question": "Which programming language is primarily used for web development and runs in the browser?"
-    },
-    {
-      "answer": 0,
-      "options": [
-        "Hypertext Markup Language",
-        "Home Tool Markup Language",
-        "Hyperlinking Text Marking Language",
-        "Hypertext Management Language"
-      ],
-      "question": "What does HTML stand for?"
-    },
-    {
-      "answer": 2,
-      "options": [
-        "int",
-        "list",
-        "str",
-        "dict"
-      ],
-      "question": "In Python, which data type is used to represent text?"
-    },
-    {
-      "answer": 1,
-      "options": [
-        "Branch",
-        "Fork",
-        "Merge",
-        "Commit"
-      ],
-      "question": "In Git, what is the term used for creating a personal copy of someone else's project?"
-    },
-    {
-      "answer": 3,
-      "options": [
-        "Agile",
-        "Waterfall",
-        "Kanban",
-        "Scrum"
-      ],
-      "question": "Which Agile framework uses time-boxed iterations called sprints?"
-    }
-  ]
-}
+Go ahead, create a quiz for me please.
 `
 
 interface Question {
@@ -82,6 +36,17 @@ export class QuizGenerator {
     @Inject('DYNAMODB_CLIENT') private readonly docClient: DynamoDBDocumentClient,
     @Inject('GOOGLE_AI_CLIENT') private readonly ai: GoogleGenerativeAI,
   ) {}
+
+  private async getQuiz(date: string) {
+    const response = await this.docClient.send(new GetCommand({
+      TableName: process.env.TABLE_NAME || '',
+      Key: {
+        pk: `QUIZ#${date}`,
+        sk: `QUIZ`,
+      },
+    }))
+    return response.Item ? response.Item.questions : null
+  }
 
   async generate() {
     const model = this.ai.getGenerativeModel({ model: 'gemini-1.5-pro-latest' })
@@ -112,21 +77,37 @@ export class QuizGenerator {
       },
     ]
   
+    let prompt = PROMPT_1 + PROMPT_2
+
+    let today = new Date().toISOString().split('T')[0]
+    for (let i = 0; i < 5; i++) {
+      const quiz = await this.getQuiz(today)
+      if (quiz) {
+        prompt += `Example quiz ${i + 1}:\n${JSON.stringify(quiz, null, 2)}\n\n`
+      } else {
+        break
+      }
+      today = new Date(+new Date(today) - 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+    }
+  
     const chat = model.startChat({
       generationConfig,
       safetySettings,
-      history: [
-      ],
+      history: [],
     })
-
-    const result = await chat.sendMessage(PROMPT)
+  
+    prompt += PROMPT_3
+    console.log(prompt)
+    const result = await chat.sendMessage(prompt)
     const response = result.response
     const generated = response.text() || ''
     console.log(generated)
 
     const cleanedString = generated.split('\n').filter(line => !line.includes('```')).join('\n');
-    const quiz: Quiz = JSON.parse(cleanedString)
-    quiz.date = new Date(2 * 24 * 60 * 60 * 1000 + +new Date()).toISOString().split('T')[0]
+    const quiz: Quiz = {
+      date: new Date(2 * 24 * 60 * 60 * 1000 + +new Date()).toISOString().split('T')[0],
+      questions: JSON.parse(cleanedString),
+    }
 
     await this.docClient.send(new PutCommand({
       TableName: process.env.TABLE_NAME || '',
